@@ -41,6 +41,7 @@ class Pessoa{
 
 */
 
+
 /*
     Define o caminho a partir de onde deverão ser lidos os arquivos .txt
     Neste caso o servidor está na rede local, e foi montado em /mnt/ponto/.
@@ -98,6 +99,7 @@ function definir_path(){
 }
 
 
+
 /*
     Cria uma cópia local do banco de dados do microsoft access, que contém a lista de usuários.    
 */
@@ -126,7 +128,6 @@ function log_($string){
 
 }
 
-
 /*
     Recebe um horário no formato hh:mm:ss e retorna em segundos
 */
@@ -137,11 +138,13 @@ function horario_to_seg($horario){
     return $time_seconds;
 }
 
+
+
 /*
     Define as horas trabalhadas baseado nos horários em que o funcionário bateu o ponto.
 */
 function definir_horas_trabalhadas($chegada1,$chegada2,$saida1,$saida2){
-    echo "$chegada1    $chegada2    $saida1    $saida2    ";
+    //echo "$chegada1    $chegada2    $saida1    $saida2    ";
     $zero = '00:00:00';
     if($saida1 == NULL){
         $saida1 = $chegada1;
@@ -154,7 +157,7 @@ function definir_horas_trabalhadas($chegada1,$chegada2,$saida1,$saida2){
         $saida2 = $chegada2;
     }
 
-    echo "\n $chegada1    $chegada2    $saida1    $saida2    ";
+    //echo "\n $chegada1    $chegada2    $saida1    $saida2    ";
 
     $chegou1 = horario_to_seg($chegada1);
     $chegou2 = horario_to_seg($chegada2);
@@ -163,21 +166,22 @@ function definir_horas_trabalhadas($chegada1,$chegada2,$saida1,$saida2){
     $metade1 = $saiu1-$chegou1;
     $metade2 = $saiu2-$chegou2;
     $horastrabalhadas = ($metade1+$metade2)/3600;
-
+    /*
     echo "\nchegou1: $chegou1, saiu1: $saiu1, chegou2: $chegou2, 
     saiu2 : $saiu2, m1 = $metade1, m2=$metade2, 
-    total = $horastrabalhadas ";
+    total = $horastrabalhadas ";*/
 
     return $horastrabalhadas;
 }
 
+
 /*
     Define a carga horária baseado no campo AppID, que é gerado pelo Griaule Biometrics quando você cadastra um novo usuário, e ele pede
     que digite um identificador.
-
 */
 function definir_carga_horaria($id){
-    if($id > 0 && $id < 940){
+    $cargahoraria = null;
+    if( ($id > 0 &&$id < 940)||($id > 3997&&$id < 4997)){
         $cargahoraria = 7;
     }elseif($id > 945 && $id < 995){
         $cargahoraria = 5;
@@ -186,6 +190,14 @@ function definir_carga_horaria($id){
     }elseif($id > 4997 && $id < 6000){
         $cargahoraria = 8;
     }
+    if($cargahoraria = null)
+    {
+        log_("Carga horária NULA em ID $id");
+        return null;
+    }else{
+        return $cargahoraria;
+    }
+    
 }
 /*
     Lista todos os .txt com 'punchlog_' do $dir, retorna um array $files
@@ -194,10 +206,10 @@ function listar_txt($dir){
     chdir($dir);
     $files = glob('punchlog_*.txt');
     foreach($files as $file){
-        echo "$file\n";
+       // echo "$file\n";
     }
     
-    return $dir;
+    return $files;
 }
 
 
@@ -239,13 +251,25 @@ function submeterdados(Pessoa $pessoa){
     $chegadafinal2 = $final.$pessoa->chegada2;
     $saidafinal1 = $final.$pessoa->saida1;
     $saidafinal2 = $final.$pessoa->saida2;
-    /*
-            Continuar apos linha 45 depois de passar o script
-    */
+    #= "SELECT idusuario from usuario where nome LIKE $pessoa->nome";
+    $conn = conectar();
+    $pessoa->nome = trim(preg_replace('/\s+/', ' ', $pessoa->nome));
+    $pegaID = "SELECT idusuario from usuario where nome LIKE '$pessoa->nome';";
+    $stmt = $conn->prepare("SELECT idusuario from usuario where nome LIKE '$pessoa->nome';");
+    $stmt->execute();
+    $id = $stmt->fetch();
+    $id = $id["idusuario"];
+    $dados = "INSERT INTO registro(idusuario,entrada1,saida1,entrada2,saida2,horastrab) values ($id,'$chegadafinal1','$saidafinal1','$chegadafinal2','$saidafinal2',$pessoa->horastrab);";
+    try{
+        $conn->exec($dados);
+    }catch(PDOException $e){
+        echo $dados . "\n" . $e->getMessage();
+    }
+    
+    $conn = null;
 
 
     
-
 }
 
 
@@ -254,10 +278,11 @@ function submeterdados(Pessoa $pessoa){
     Lê os usuários do arquivo MDB e envia ao MySql
 */
 function atualizar(){
+    copiar_mdb();
     $dbName = $_SERVER['HOME'] . "/users.mdb";
     
      if (!file_exists($dbName)) 
-        log_("Arquivo $dbName não existe!!");
+        log_("Arquivo $dbName chamado na função 'atualizar' não existe!!");
     
     $connection = odbc_connect("YourDSN","",""); 
     /*
@@ -328,46 +353,114 @@ function atualizar(){
     Script principal
     É uma função, para facilitar construir o banco de registros. 
     Recebe o path do arquivo onde atuará e retorna true ou false.
+    Automaticamente chama a função atualizar() antes de se executar.
 
 
 */
 function script($filepath){
+    atualizar();
     $dir = $filepath;
     if(!is_file($dir)){    #verifica se o arquivo existe ou não
         log_("arquivo $dir não existe");
     }
 
     $handle = fopen($filepath, "r");
-    $array = array();
+    $conteudo = array();
+    $excl = array(); //lista de exclusão
     if ($handle) {
-        while (($line = fgets($handle)) !== false) {
-            echo utf8_encode($line); #Transforma do ISO-8859-1 do Windows para UTF-8 do GNU/Linux
-            $array = utf8_encode($line);
+        while (($line = fgets($handle)) !== false) {    
+            $conteudo[] = utf8_encode($line);
+            
         }
+        $tamanho = count($conteudo);
+        for($z=0;$z<($tamanho);$z++)
+        {
+            //echo "VALOR DO Z: $z\n VALOR DO TAMANHO: $tamanho\n";
+            $line = $conteudo[$z];
+            $cortar = explode(' ',$line);
+            $splitnome = explode('-',$line);
+            $flag = in_array($splitnome[2], $excl);
+            if(!$flag)
+            {
+                $nome = $splitnome[2];
+                $id = $splitnome[1];
+                $cargahoraria = definir_carga_horaria($id);
+                $horavar = explode('-' ,$cortar[1]);
+                $horachegada = $horavar[0];
+                $data = $cortar[0];
+                $user = new Pessoa($nome,$id,$data,$horachegada,NULL,NULL,NULL,$cargahoraria,NULL);
+                $excl[] = $nome;
+                $loop = 0; //Conta quantas vezes já fez scan do nome
+                for($x=0;$x<($tamanho);$x++)
+                {
+                    $line2 = $conteudo[$x];
+                    $cortar2 = explode(' ',$line2);
+                    $splitnome2 = explode('-',$line2);
+                    $nome2 = $splitnome2[2];
+                    $horavar2 = explode('-' ,$cortar2[1]);
+                    $horasaida = $horavar2[0];
+                    # SE a diferença entre as duas entradas for maior que 5min(300s)
+                    if(($nome2 == $nome) && (horario_to_seg($horasaida) - horario_to_seg($horachegada) >= 300))
+                    {
+                        if($loop == 0)
+                        {
+                            $user->saida1 = $horasaida;
+                            $loop = $loop+1;
+                            $anterior = $horasaida;
+                        }elseif($loop == 1 && ((horario_to_seg($horasaida) - horario_to_seg($anterior)) >= 300))
+                        {
+                            $user->chegada2 = $horasaida;
+                            $loop = $loop+1;
+                            $anterior = $horasaida;
+                        }elseif($loop == 2 &&((horario_to_seg($horasaida) - horario_to_seg($anterior)) >= 300))
+                        {
+                            $user->saida2 = $horasaida;
+                        }
+                    }
+                    if($x == ($tamanho)){ //resetando $x para '0'
+                        $x = 0;
+                    }
+                }
+                $user->horastrab = definir_horas_trabalhadas($user->chegada1,$user->chegada2,$user->saida1,$user->saida2);
+                //echo "Chegada1:$user->chegada1 Saida1:$user->saida1 Chegada2: $user->chegada2, Saida2:$user->saida2  Horas trab: $user->horastrab\n";
+                submeterdados($user);
+
+
+            }
+            /*echo "Espaço: \n";
+            print_r($cortar);
+            echo "traço\n";
+            print_r($splitnome);
+            sleep(2);*/
+        }
+        
+        
         fclose($handle);
     }
-} //#####################################incompleto########################################################
-
-
-//Padrão de chamada:
-//script(definir_path());
-
-//Para testes:
-//script('/mnt/ponto/punchlog_01.fev.2016.txt');
+}
 
 
 
+/*
 
-//listar_txt('/mnt/ponto');
+    Função que preenche os registros com todos os arquivos punchlog_*.txt
+    existentes em um diretório $dir informado
+
+*/
+function preencher_registros($dir){
+    $array = listar_txt($dir);
+    foreach($array as $arq)
+    {
+        script($arq);
+    }
+}
 
 
-//definir_horas_trabalhadas('07:43:20','13:00:00','12:01:02','18:03:50');
 
 
-//horario_to_seg(date('H:i:s'));
+//Padrão de chamada do script:
+script(definir_path());
 
-//$usuario = new Pessoa('Fulano',5,'6/11/2017','07:43:20','13:00:00','12:01:02','18:03:50','carga',7.66);
-//submeterdados($usuario);
 
 
 
